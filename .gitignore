@@ -1,0 +1,11 @@
+data/*.mat
+data/cache/
+
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.DS_Store
+.venv/
+
+# 수업 제공 스크래치 노트북 (저작권 고지 자료 · 공개 저장소 제외)
+30-ESSHealth-scratch.ipynb

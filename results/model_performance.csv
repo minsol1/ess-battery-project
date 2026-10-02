@@ -1,0 +1,10 @@
+구분,MAPE (%),비고
+Train (Batch 1 CV),8.95,4-fold 정책 그룹 CV 평균
+Valid (Batch 1 Hold-out),8.02,정책 단위 홀드아웃 8셀
+Test (Batch 2),28.59,레이블 보유 39셀
+Gap (Train-Valid),-0.93,(+) : 과적합 의심
+Gap (Valid-Test),20.57,(+) : 배치간 일반화 저하 의심
+Gap (Target-Test),19.49,Target : 원논문 9.1%
+Test (Batch 3),12.09,레이블 보유 44셀
+Gap (Batch2-Batch3),-16.51,Test 성능 간 비교 · (+) : B3에서 저하
+"Gap (Target-Test, Batch 3)",2.99,"Batch 3 기준, 원논문 성능 비교"

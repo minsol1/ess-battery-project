@@ -1,0 +1,21 @@
+check,fold,item,value
+"EN 계수 (dQ+policy_raw, log)",0,log_var_dQ,-0.04017325595904653
+"EN 계수 (dQ+policy_raw, log)",0,C1,-0.0
+"EN 계수 (dQ+policy_raw, log)",0,C2,0.0011152529229611636
+"EN 계수 (dQ+policy_raw, log)",0,SOC1,-0.0
+"EN 계수 (dQ+policy_raw, log)",1,log_var_dQ,-0.04016548859077108
+"EN 계수 (dQ+policy_raw, log)",1,C1,-0.0420204268658226
+"EN 계수 (dQ+policy_raw, log)",1,C2,0.009693968607673166
+"EN 계수 (dQ+policy_raw, log)",1,SOC1,-0.02335351291373512
+"EN 계수 (dQ+policy_raw, log)",2,log_var_dQ,-0.06439284906531768
+"EN 계수 (dQ+policy_raw, log)",2,C1,-0.001760778778424423
+"EN 계수 (dQ+policy_raw, log)",2,C2,0.0
+"EN 계수 (dQ+policy_raw, log)",2,SOC1,-0.0019141706556776385
+"EN 계수 (dQ+policy_raw, log)",3,log_var_dQ,-0.05064731665474595
+"EN 계수 (dQ+policy_raw, log)",3,C1,-0.003221224067544745
+"EN 계수 (dQ+policy_raw, log)",3,C2,0.013401017896029897
+"EN 계수 (dQ+policy_raw, log)",3,SOC1,-0.0
+잔차 2차 계수 (최선 Ridge),0,log_var_dQ,-96.30581662956024
+잔차 2차 계수 (최선 Ridge),1,log_var_dQ,234.9410646855709
+잔차 2차 계수 (최선 Ridge),2,log_var_dQ,73.18485720707359
+잔차 2차 계수 (최선 Ridge),3,log_var_dQ,9.54145908255721
