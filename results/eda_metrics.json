@@ -1,0 +1,74 @@
+{
+  "batches": {
+    "B1": {
+      "n": 46,
+      "near_eol": 36,
+      "life_median": 858.5,
+      "under_500_pct": 0.0,
+      "over_1000_pct": 21.73913043478261,
+      "early_fade_lower": 0.019714444444444514,
+      "early_fade_upper": 0.008551111111111521,
+      "late_fade_ratio": 1.4720026087140596,
+      "knee_found": 36,
+      "knee_median": 579.0,
+      "max_time_gap_hours_median": 0.001409986111110717,
+      "high_current_life_rho": -0.28992845745755835,
+      "high_current_late_fade_rho": -0.07335907335907337
+    },
+    "B2": {
+      "n": 39,
+      "near_eol": 39,
+      "life_median": 472.0,
+      "under_500_pct": 71.7948717948718,
+      "over_1000_pct": 7.6923076923076925,
+      "early_fade_lower": -0.012423888888888098,
+      "early_fade_upper": 0.014120000000001416,
+      "late_fade_ratio": 1.795243813931928,
+      "knee_found": 39,
+      "knee_median": 361.0,
+      "max_time_gap_hours_median": 65.3546717777778,
+      "high_current_life_rho": 0.05314303094338464,
+      "high_current_late_fade_rho": -0.21497975708502026
+    },
+    "B3": {
+      "n": 44,
+      "near_eol": 44,
+      "life_median": 1005.5,
+      "under_500_pct": 0.0,
+      "over_1000_pct": 52.27272727272727,
+      "early_fade_lower": 0.012090000000000403,
+      "early_fade_upper": 0.015564444444445455,
+      "late_fade_ratio": 1.5955748553323268,
+      "knee_found": 44,
+      "knee_median": 827.0,
+      "max_time_gap_hours_median": 0.0014002777777790908,
+      "high_current_life_rho": 0.3955176555033811,
+      "high_current_late_fade_rho": -0.23579985905567297
+    }
+  },
+  "b1_near_eol": {
+    "var_skew": 1.1085571584204057,
+    "log_var_skew": 0.21760386502215398,
+    "life_skew": 0.30005260559336955,
+    "c1_soc_rho": -0.8781593165651348,
+    "mean_c_life_rho": -0.43486105531239155,
+    "centered_dq_life_rho": -0.11597938144329896,
+    "dq_redundancy": {
+      "log_var_dQ": {
+        "log_var_dQ": 1.0,
+        "mean_dQ": -0.9660231660231661,
+        "min_dQ": -0.9876447876447877
+      },
+      "mean_dQ": {
+        "log_var_dQ": -0.9660231660231661,
+        "mean_dQ": 1.0,
+        "min_dQ": 0.9804375804375804
+      },
+      "min_dQ": {
+        "log_var_dQ": -0.9876447876447877,
+        "mean_dQ": 0.9804375804375804,
+        "min_dQ": 1.0
+      }
+    }
+  }
+}

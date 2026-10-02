@@ -1,0 +1,50 @@
+{
+  "seed": 20261001,
+  "outer_folds": 4,
+  "inner_folds": 3,
+  "model": "Ridge",
+  "feature_set": "dQ",
+  "features": [
+    "log_var_dQ"
+  ],
+  "target": "raw",
+  "target_mape": 9.1,
+  "cv_mape": 8.835647695586813,
+  "cv_std": 2.325048187665189,
+  "best_params": {
+    "ridge__alpha": 0.001
+  },
+  "n_train": 28,
+  "n_valid": 8,
+  "n_b2": 39,
+  "n_b3": 44,
+  "input_bounds": {
+    "log_var_dQ": [
+      -4.178877963304522,
+      -3.42070000480644
+    ]
+  },
+  "life_bounds": [
+    599.0,
+    1074.0
+  ],
+  "python": "3.11.15",
+  "packages": {
+    "numpy": "1.26.4",
+    "pandas": "2.1.4",
+    "scipy": "1.11.4",
+    "scikit-learn": "1.4.2",
+    "h5py": "3.16.0",
+    "pyarrow": "25.0.0",
+    "matplotlib": "3.7.5"
+  },
+  "source_sha256": {
+    "__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "eda.py": "8f07f96d229e326de6fb1d8ed459f2986fb42ab3f1cce25ff82e91c4a654bb84",
+    "features.py": "b7a90c7178d003fdbe06c49cac64f14100f337893072319526cca111ed3f495f",
+    "plotting.py": "1cdb18ef6792961989be1d9cb34b5bde82195d4264d3b1301cd067bdbdc5e01b",
+    "preprocess.py": "4beaf604ed9a58a3a47310ca63ea05b4defc9e405f5d151e52e6aa66b41f07b9",
+    "train.py": "5a2650b8b520cac51ec37403f86a10a5c5e71103c4fff92d91452cdbccb44730",
+    "verify.py": "3d960c25546753a18af44d17f09dab5a9ce565f6b5708518b50ac2d88dafeebf"
+  }
+}

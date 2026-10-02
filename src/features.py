@@ -11,7 +11,7 @@ import re
 import numpy as np
 import pandas as pd
 
-from src.preprocess import load_cache
+from src.preprocess import CACHE_DIR, load_cache
 
 # Qdlin cycles 배열 인덱스 (0-based) → 10·100번째 사이클. Day 1 수치(B1 ρ=-0.87, 왜도 1.11→0.22)와 일치 확인
 IDX_Q10, IDX_Q100 = 9, 99
@@ -51,7 +51,13 @@ def mean_c_rate(c1, soc1, c2):
 
 def delta_q(qdlin, cell_id):
     """ΔQ(V) = Q100(V) - Q10(V), 1,000개 전압점 (단위 Ah). 열화가 클수록 음의 값이 커진다."""
-    return qdlin[f"{cell_id}|{IDX_Q100}"] - qdlin[f"{cell_id}|{IDX_Q10}"]
+    keys = [f"{cell_id}|{i}" for i in (IDX_Q10, IDX_Q100)]
+    if any(k not in qdlin for k in keys):
+        raise ValueError(f"{cell_id}: cycle 10·100의 Qdlin이 필요합니다.")
+    a, b = (np.asarray(qdlin[k], dtype=float) for k in keys)
+    if a.shape != (1000,) or b.shape != a.shape or not np.isfinite([a, b]).all():
+        raise ValueError(f"{cell_id}: Qdlin은 유한한 1,000개 전압점이어야 합니다.")
+    return b - a
 
 
 def early_summary(summary, start=2, end=100):
@@ -73,11 +79,13 @@ def early_summary(summary, start=2, end=100):
     return out.reset_index(names="cell_id")
 
 
-def build_features():
+def build_features(cache_dir=CACHE_DIR):
     """레이블 보유 셀(B1·B2·B3)의 피처 테이블."""
-    cells, summary, qdlin = load_cache()
+    cells, summary, qdlin = load_cache(cache_dir)
     # 레이블(cycle_life) 없는 셀(VarCharge·SLOWCYCLE 등)은 제외 → B1 46 / B2 39 / B3 44셀
     df = cells[cells["cycle_life"].notna()].copy()
+    if df.empty or not np.isfinite(df["cycle_life"]).all() or (df["cycle_life"] <= 0).any():
+        raise ValueError("양수인 cycle_life 레이블이 필요합니다.")
 
     # ── 충전 정책 피처 ──────────────────────────────
     pol = df["policy"].apply(parse_policy)
@@ -90,6 +98,8 @@ def build_features():
     # ── ΔQ(V) 피처 ───────────────────────────────────
     dq = {cid: delta_q(qdlin, cid) for cid in df["cell_id"]}
     df["var_dQ"] = [np.var(dq[c]) for c in df["cell_id"]]  # ddof=0, 1,000 전압점
+    if (df["var_dQ"] <= 0).any():
+        raise ValueError("ΔQ 분산이 0인 셀은 log10 변환할 수 없습니다.")
     df["log_var_dQ"] = np.log10(df["var_dQ"])              # 모델 입력 (왜도 +1.11 → +0.22)
     df["mean_dQ"] = [np.mean(dq[c]) for c in df["cell_id"]]   # 분산과 중복 → 분석용
     df["min_dQ"] = [np.min(dq[c]) for c in df["cell_id"]]     # 분산과 중복 → 분석용
@@ -97,7 +107,7 @@ def build_features():
     # ── 초기 summary 통계 (오류 분석용) ─────────────
     df = df.merge(early_summary(summary), on="cell_id", how="left")
 
-    # B1 학습 후보 = 마지막 QD ≤ 0.885 Ah (종료 근접 36셀). B2·B3는 모두 EOL 아래까지 기록됨
+    # 0.885 Ah는 종료 근접 판정선이다. 실제 EOL 0.88 Ah와 구별한다.
     df["near_eol"] = df["last_QD"] <= NEAR_EOL_QD
     df["log_cycle_life"] = np.log10(df["cycle_life"])
     return df.reset_index(drop=True)

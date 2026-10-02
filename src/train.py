@@ -5,13 +5,18 @@ Day 1 설계(3-3 ~ 3-7):
   2. 학습 28셀 정책 그룹 4-fold CV, 원 단위 MAPE
        기준선(1/y 가중 중앙값) · Ridge × 입력 5구성 × 타깃 2종(원 수명 / log 수명)
        → 최선 Ridge 대비 Elastic Net · 얕은 회귀트리 (채택: MAPE 1%p↓ + 4개 중 3개 폴드 개선)
-         최선 입력 + 최선 다변수 입력 두 가지로 비교, EN 폴드별 계수 · Ridge 잔차 곡률을 함께 기록
+         EN은 정책 단독·결합 입력 모두 비교, 트리는 최선 입력·최선 다변수 입력만 탐색 비교
   3. 선택 고정 → 학습 28셀 재학습 → 홀드아웃 8셀 → 같은 모델로 B2 (·B3)
   4. 세부 성능: 실험집단 / 입력 범위 안·밖 / 학습 수명 범위 밖 / 원래 정책별
-대치·표준화는 Pipeline 안에서 각 학습 폴드에만 적합한다.
+대치·표준화는 내부·외부 정책 그룹 CV 모두 Pipeline 안에서 각 학습 폴드에만 적합한다.
 
 실행: python -m src.train
 """
+import argparse
+import hashlib
+import json
+import platform
+from importlib.metadata import version
 from pathlib import Path
 
 import numpy as np
@@ -19,27 +24,32 @@ import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin, clone
 from sklearn.compose import TransformedTargetRegressor
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import ElasticNetCV, RidgeCV
-from sklearn.model_selection import GroupKFold, GroupShuffleSplit
+from sklearn.linear_model import ElasticNet, Ridge
+from sklearn.metrics import make_scorer
+from sklearn.model_selection import GridSearchCV, GroupKFold, GroupShuffleSplit
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeRegressor
 
 from src.features import FEATURE_SETS, build_features
+from src.preprocess import CACHE_DIR
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS_DIR = ROOT / "results"
 
 SEED = 20261001                   # Day 1 3-4 분할 seed
 N_FOLDS = 4                       # 정책 그룹 CV 폴드 수 (학습 28셀 → 폴드당 학습 약 21셀)
-TARGET_MAPE = 9.1                 # Severson et al. (2019) primary test
-ALPHAS = np.logspace(-3, 3, 25)   # Ridge 정규화 강도 후보 (RidgeCV 가 학습 폴드 안에서 LOO 로 선택)
+TARGET_MAPE = 9.1                 # 과제 지정 기준: 논문 초록의 대표 성능 (동일 분할 재현값 아님)
+ALPHAS = np.logspace(-3, 3, 25)
+INNER_FOLDS = 3                   # 하이퍼파라미터 선택도 정책 단위로 분리
 
 
 # ---------------------------------------------------------------- metrics
 def mape(y, p):
     """평균 절대 백분율 오차 (%). 원 단위(사이클)에서 계산."""
     y, p = np.asarray(y, float), np.asarray(p, float)
+    if y.size == 0 or y.shape != p.shape or not np.isfinite([y, p]).all() or (y <= 0).any():
+        raise ValueError("MAPE에는 같은 크기의 유한한 예측과 양수 레이블이 필요합니다.")
     return float(np.mean(np.abs(p - y) / y) * 100)
 
 
@@ -79,13 +89,28 @@ def _linear(reg, log_target):
 
 
 def ridge(log_target):
-    """우선 후보: L2 정규화로 소표본·정책 변수 중복에 대응."""
-    return _linear(RidgeCV(alphas=ALPHAS), log_target)
+    """전처리를 포함한 Pipeline 전체를 내부 정책 그룹 CV로 선택한다."""
+    prefix = "regressor__" if log_target else ""
+    return GridSearchCV(_linear(Ridge(), log_target), {prefix + "ridge__alpha": ALPHAS},
+                        scoring=make_scorer(mape, greater_is_better=False),
+                        cv=GroupKFold(INNER_FOLDS), error_score="raise")
 
 
 def elastic_net(log_target):
-    """보조 후보: L1+L2 로 일부 계수를 0으로 축소 (alpha·l1_ratio 는 학습 폴드 안 3-fold 로 선택)."""
-    return _linear(ElasticNetCV(l1_ratio=[0.2, 0.5, 0.8], n_alphas=50, cv=3, max_iter=50_000), log_target)
+    """L1+L2 후보: 내부 정책 그룹 CV에서 alpha·l1_ratio를 선택한다."""
+    prefix = "regressor__" if log_target else ""
+    alphas = np.logspace(-5, 1, 25) if log_target else ALPHAS
+    return GridSearchCV(_linear(ElasticNet(max_iter=50_000), log_target),
+                        {prefix + "elasticnet__alpha": alphas,
+                         prefix + "elasticnet__l1_ratio": [0.2, 0.5, 0.8]},
+                        scoring=make_scorer(mape, greater_is_better=False),
+                        cv=GroupKFold(INNER_FOLDS), error_score="raise")
+
+
+def fit_model(model, train, cols):
+    """내부 탐색에 현재 학습 부분집합의 정책 그룹만 전달한다."""
+    kwargs = {"groups": train["policy_key"]} if isinstance(model, GridSearchCV) else {}
+    return model.fit(train[cols], train["cycle_life"], **kwargs)
 
 
 def shallow_tree(log_target):
@@ -98,7 +123,7 @@ def shallow_tree(log_target):
 def split_b1(df):
     """B1 종료 근접 36셀 → 학습 28 / 홀드아웃 8. 같은 정책 셀은 같은 쪽에만 들어간다."""
     b1 = df[(df["batch"] == "B1") & df["near_eol"]].reset_index(drop=True)
-    gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=SEED)   # 정책 20개 중 20%
+    gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=SEED)   # 정책 그룹의 약 20%
     tr, ho = next(gss.split(b1, groups=b1["policy_key"]))
     return b1.iloc[tr].reset_index(drop=True), b1.iloc[ho].reset_index(drop=True)
 
@@ -109,7 +134,7 @@ def cv_mape(model, train, cols):
     scores = []
     # GroupKFold: 검증 폴드의 정책은 학습 폴드에 없음 → '새 정책' 에 대한 일반화 성능
     for tr, va in GroupKFold(n_splits=N_FOLDS).split(X, y, g):
-        m = clone(model).fit(X.iloc[tr], y.iloc[tr])   # clone: 폴드마다 새 모델
+        m = fit_model(clone(model), train.iloc[tr], cols)
         scores.append(mape(y.iloc[va], m.predict(X.iloc[va])))
     return np.array(scores)
 
@@ -131,20 +156,22 @@ def compare_models(train):
         for log_t in (False, True):
             add("Ridge", ridge(log_t), fs, "log" if log_t else "raw")
 
-    # 3) 최선 Ridge 와 같은 입력·타깃으로 Elastic Net · 얕은 트리 비교
+    # 3) Day 1의 정책 단독·결합 입력을 모두 Elastic Net으로 확인한다.
     ridge_rows = [r for r in rows if r["model"] == "Ridge"]
     best = min(ridge_rows, key=lambda r: r["cv_mape"])
-    log_t = best["target"] == "log"
-    add("ElasticNet", elastic_net(log_t), best["features"], best["target"])
-    add("Tree(d2,leaf5)", shallow_tree(log_t), best["features"], best["target"])
+    for fs in FEATURE_SETS:
+        for log_t in (False, True):
+            add("ElasticNet", elastic_net(log_t), fs, "log" if log_t else "raw")
 
-    # 4) Day 1 3-7: Elastic Net 은 Ridge 가 고른 '다변수' 입력에서 변수 선택의 이득을 검증하고,
-    #    얕은 트리는 같은 입력으로 전류 조건 × ΔQ 의 분기·상호작용을 표현할 수 있는지 비교
+    # 4) 트리는 최선 입력·최선 다변수 입력에만 제한해 탐색 비교한다.
+    # Day 1의 조건부 후보를 진단 비교까지 확장했으며, 채택 기준은 그대로 유지한다.
     multi = min((r for r in ridge_rows if len(FEATURE_SETS[r["features"]]) > 1), key=lambda r: r["cv_mape"])
-    if multi["features"] != best["features"]:
-        log_m = multi["target"] == "log"
-        add("ElasticNet", elastic_net(log_m), multi["features"], multi["target"])
-        add("Tree(d2,leaf5)", shallow_tree(log_m), multi["features"], multi["target"])
+    seen = set()
+    for candidate in (best, multi):
+        key = (candidate["features"], candidate["target"])
+        if key not in seen:
+            add("Tree(d2,leaf5)", shallow_tree(key[1] == "log"), *key)
+            seen.add(key)
 
     res = pd.DataFrame(rows)
     # 최선 Ridge 대비 MAPE 차이 (음수 = 더 좋음) · 폴드별로 최선 Ridge 보다 나은 폴드 수
@@ -155,6 +182,7 @@ def compare_models(train):
 
 def _last_step(model):
     """Pipeline(또는 로그 타깃 래퍼) 안의 마지막 회귀기."""
+    model = model.best_estimator_ if isinstance(model, GridSearchCV) else model
     pipe = model.regressor_ if isinstance(model, TransformedTargetRegressor) else model
     return pipe[-1]
 
@@ -165,7 +193,7 @@ def en_selection(train, fs, target):
     X, y, g = train[cols], train["cycle_life"], train["policy_key"]
     rows = []
     for k, (tr, _) in enumerate(GroupKFold(n_splits=N_FOLDS).split(X, y, g)):
-        m = elastic_net(target == "log").fit(X.iloc[tr], y.iloc[tr])
+        m = fit_model(elastic_net(target == "log"), train.iloc[tr], cols)
         rows += [{"check": f"EN 계수 ({fs}, {target})", "fold": k, "item": c, "value": coef}
                  for c, coef in zip(cols, _last_step(m).coef_)]
     return pd.DataFrame(rows)
@@ -179,7 +207,7 @@ def residual_curvature(model, train, cols):
     X, y, g = train[cols], train["cycle_life"], train["policy_key"]
     rows = []
     for k, (tr, va) in enumerate(GroupKFold(n_splits=N_FOLDS).split(X, y, g)):
-        m = clone(model).fit(X.iloc[tr], y.iloc[tr])
+        m = fit_model(clone(model), train.iloc[tr], cols)
         err = (m.predict(X.iloc[va]) - y.iloc[va]) / y.iloc[va] * 100
         quad = np.polyfit(train["log_var_dQ"].iloc[va], err, 2)[0]
         rows.append({"check": "잔차 2차 계수 (최선 Ridge)", "fold": k, "item": "log_var_dQ", "value": quad})
@@ -240,28 +268,31 @@ def breakdown(pred, train, cols):
     return pd.DataFrame(rows)
 
 
-def report_table(cv, valid, b2, b3=None):
+def report_table(cv, valid, b2, b3=None, *, n_valid=8, n_b2=39, n_b3=44):
     """과제 Reporting format (Regression). Gap 은 모두 '뒤 - 앞' → (+) 이면 성능 저하."""
     rows = [
         ("Train (Batch 1 CV)", cv, f"{N_FOLDS}-fold 정책 그룹 CV 평균"),
-        ("Valid (Batch 1 Hold-out)", valid, "정책 단위 홀드아웃 8셀"),
-        ("Test (Batch 2)", b2, "레이블 보유 39셀"),
+        ("Valid (Batch 1 Hold-out)", valid, f"정책 단위 홀드아웃 {n_valid}셀"),
+        ("Test (Batch 2)", b2, f"레이블 보유 {n_b2}셀"),
         ("Gap (Train-Valid)", valid - cv, "(+) : 과적합 의심"),
         ("Gap (Valid-Test)", b2 - valid, "(+) : 배치간 일반화 저하 의심"),
         ("Gap (Target-Test)", b2 - TARGET_MAPE, f"Target : 원논문 {TARGET_MAPE}%"),
     ]
     if b3 is not None:
         rows += [
-            ("Test (Batch 3)", b3, "레이블 보유 44셀"),
+            ("Test (Batch 3)", b3, f"레이블 보유 {n_b3}셀"),
             ("Gap (Batch2-Batch3)", b3 - b2, "Test 성능 간 비교 · (+) : B3에서 저하"),
             ("Gap (Target-Test, Batch 3)", b3 - TARGET_MAPE, "Batch 3 기준, 원논문 성능 비교"),
         ]
     return pd.DataFrame(rows, columns=["구분", "MAPE (%)", "비고"]).round({"MAPE (%)": 2})
 
 
-def main():
-    RESULTS_DIR.mkdir(exist_ok=True)
-    df = build_features()
+def main(cache_dir=CACHE_DIR, results_dir=RESULTS_DIR):
+    results_dir = Path(results_dir)
+    results_dir.mkdir(parents=True, exist_ok=True)
+    df = build_features(cache_dir)
+    if not {"B1", "B2"}.issubset(set(df["batch"])):
+        raise ValueError("B1 학습·B2 평가 데이터가 모두 필요합니다.")
     train, holdout = split_b1(df)   # 학습 28 / 홀드아웃 8
 
     # 1) 학습 28셀 안에서만 CV 비교 → 최종 모델 선택 (홀드아웃·B2 는 선택에 쓰지 않음)
@@ -279,7 +310,7 @@ def main():
     print("\n" + diag.pivot_table(index=["check", "item"], columns="fold", values="value").round(3).to_string())
 
     # 2) 선택 고정 → 학습 28셀 전체로 재학습. B2 평가에도 같은 모델을 그대로 사용
-    model = make_model(final["model"], final["target"]).fit(train[cols], train["cycle_life"])
+    model = fit_model(make_model(final["model"], final["target"]), train, cols)
 
     # 3) 홀드아웃(valid) · B2/B3(test) 예측
     test = df[df["batch"].isin(["B2", "B3"])]
@@ -292,16 +323,44 @@ def main():
     b2 = pred[pred["batch"] == "B2"]
     b3 = pred[pred["batch"] == "B3"]
     table = report_table(final["cv_mape"], valid, mape(b2["cycle_life"], b2["pred"]),
-                         mape(b3["cycle_life"], b3["pred"]))
+                         mape(b3["cycle_life"], b3["pred"]) if len(b3) else None,
+                         n_valid=len(holdout), n_b2=len(b2), n_b3=len(b3))
     detail = breakdown(pred, train, cols)
 
     # 5) 저장 (folds 배열은 CSV 에 넣기 위해 리스트로 변환)
-    res.assign(folds=res["folds"].apply(lambda a: np.round(a, 2).tolist())).to_csv(
-        RESULTS_DIR / "cv_comparison.csv", index=False)
-    table.to_csv(RESULTS_DIR / "model_performance.csv", index=False)
-    detail.to_csv(RESULTS_DIR / "test_breakdown.csv", index=False)
-    diag.to_csv(RESULTS_DIR / "cv_diagnostics.csv", index=False)
-    pred.to_csv(RESULTS_DIR / "predictions.csv", index=False)
+    res.assign(folds=res["folds"].apply(lambda a: json.dumps(a.tolist()))).to_csv(
+        results_dir / "cv_comparison.csv", index=False)
+    table.to_csv(results_dir / "model_performance.csv", index=False)
+    detail.to_csv(results_dir / "test_breakdown.csv", index=False)
+    diag.to_csv(results_dir / "cv_diagnostics.csv", index=False)
+    pred.to_csv(results_dir / "predictions.csv", index=False)
+
+    manifest = df[["cell_id", "batch", "policy_key", "cycle_life", "last_QD", "near_eol"]].copy()
+    manifest["split"] = np.where(manifest["batch"] == "B1", "excluded", "test")
+    manifest.loc[manifest.cell_id.isin(train.cell_id), "split"] = "train"
+    manifest.loc[manifest.cell_id.isin(holdout.cell_id), "split"] = "valid"
+    manifest["cv_fold"] = -1
+    for k, (_, va) in enumerate(GroupKFold(N_FOLDS).split(train, groups=train.policy_key)):
+        manifest.loc[manifest.cell_id.isin(train.iloc[va].cell_id), "cv_fold"] = k
+    manifest.to_csv(results_dir / "split_manifest.csv", index=False)
+    metadata = {
+        "seed": SEED, "outer_folds": N_FOLDS, "inner_folds": INNER_FOLDS,
+        "model": final["model"], "feature_set": final["features"], "features": cols,
+        "target": final["target"], "target_mape": TARGET_MAPE,
+        "cv_mape": float(final["cv_mape"]), "cv_std": float(final["cv_std"]),
+        "best_params": model.best_params_ if isinstance(model, GridSearchCV) else {},
+        "n_train": len(train), "n_valid": len(holdout), "n_b2": len(b2), "n_b3": len(b3),
+        "input_bounds": {c: [float(train[c].min()), float(train[c].max())] for c in cols},
+        "life_bounds": [float(train.cycle_life.min()), float(train.cycle_life.max())],
+        "python": platform.python_version(),
+        "packages": {p: version(p) for p in ("numpy", "pandas", "scipy", "scikit-learn", "h5py", "pyarrow", "matplotlib")},
+        "source_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                          for p in sorted((ROOT / "src").glob("*.py"))},
+    }
+    (results_dir / "run_metadata.json").write_text(json.dumps(metadata, indent=2, ensure_ascii=False) + "\n")
+
+    from src.plotting import save_figures
+    save_figures(train, pred, model, cols, results_dir)
 
     print("\n" + table.to_string(index=False))
     print("\n" + detail.round(2).to_string(index=False))
@@ -310,4 +369,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--cache-dir", type=Path, default=CACHE_DIR)
+    parser.add_argument("--results-dir", type=Path, default=RESULTS_DIR)
+    args = parser.parse_args()
+    main(args.cache_dir, args.results_dir)

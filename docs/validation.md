@@ -1,0 +1,76 @@
+# 실행 검증 기록
+
+[프로젝트 개요](../README.md) · [분석·비교 조건](analysis.md)
+
+2026-10-02, Python 3.11.15 환경에서 로컬 원본 세 배치로 전처리부터 재실행했다. Python 3.11과 [requirements.txt](../requirements.txt)의 고정 버전을 기준으로 한다.
+
+## 확인 범위
+
+| 검사 | 확인한 내용 |
+|---|---|
+| 기존 결과 재현 | 수정 전 원자료 실행의 predictions·CV·성능 CSV가 저장 결과와 일치 |
+| 전체 파이프라인 | B1·B2·B3 전처리 → 피처 → 학습 → 91셀 평가 → CSV·그림 생성 |
+| 필수 데이터만 실행 | B3 파일이 없는 별도 폴더에서 B1·B2 전처리·학습·47셀 검증 성공, 성능표 6행 |
+| 정책 분리 | 홀드아웃, 외부 4-fold, 내부 3-fold에서 정책 그룹 중복 없음 |
+| 결과 검증 | 모델 재학습 예측, 셀 목록, 후보 선택, MAPE·MAE·과대 예측률·Gap 일치 |
+| 반복 실행 | B3 유무에 따른 B1·B2 예측과 CV가 일치하며, 같은 입력 재실행 결과 일치 |
+| 노트북 | EDA·피처 설계·모델링을 각각 처음부터 끝까지 실행하고 스키마 확인 |
+| 회귀 검사 | 필수/선택 배치, 불완전 캐시, 정책 분리, ΔQ 인덱스, 기준선·MAPE, B3 없는 보고 형식 검사 |
+| 산출물 | 문서 내부 링크, 노트북 오류 출력, 그림·표의 수치와 설명 확인 |
+
+[tests](../tests/test_pipeline.py)는 원자료가 없어도 실행할 수 있다. [src.verify](../src/verify.py)는 현재 캐시와 결과 파일이 필요하며, 재학습 예측과 집계·분할·코드 해시를 대조한다. GitHub Actions는 원본을 다운로드하지 않고 회귀 검사·노트북 구조 검사를 실행한다.
+
+## 검증 방식 수정과 수치 변경
+
+기존 외부 CV는 정책 그룹으로 나눴지만, Ridge의 내부 LOO와 Elastic Net 내부 셀 단위 CV에는 같은 정책이 섞일 수 있었다. 전처리도 내부 검증을 나누기 전에 적합했다. 외부 검증셀이 직접 학습에 들어간 것은 아니지만, 내부 선택 조건이 새 정책 평가와 달랐다.
+
+Pipeline 전체를 내부 정책 그룹 CV에서 적합하고, 선택 지표도 원 단위 MAPE로 맞췄다. B1 학습·홀드아웃과 B2·B3 구성, seed, 피처 정의, 최종 모델 종류는 유지했다. 수치 변화는 검증 절차 변경의 결과이며 새 독립 테스트로 성능 개선을 입증한 것은 아니다.
+
+| 항목 | 수정 전 | 현재 |
+|---|---:|---:|
+| B1 CV MAPE | 8.95% | 8.84% |
+| B1 홀드아웃 MAPE | 8.02% | 7.79% |
+| B2 MAPE | 28.59% | 27.87% |
+| B3 MAPE | 12.09% | 12.11% |
+
+단일 분할·소표본·후보 선택에 사용된 CV라는 한계는 남는다. B2·B3는 Day 1 EDA에서 이미 탐색했으므로 완전한 블라인드 테스트로 해석하지 않는다. CPU·라이브러리 구현 차이에 따른 미세한 부동소수점 차이는 허용하며, 예측 비교에는 수치 허용오차를 적용한다.
+
+## 재실행
+
+[데이터 준비](../data/README.md)와 가상환경 설정 후 프로젝트 루트에서 실행한다.
+
+```bash
+python -m src.preprocess
+python -m src.eda
+python -m src.train
+python -m src.verify
+python -m unittest discover -s tests -v
+```
+
+기본 실행에서 B3 파일이 없다면 B1·B2만 사용한다. B3가 있어도 필수 배치만 평가하고 싶으면 캐시·결과를 별도로 지정한다.
+
+```bash
+python -m src.preprocess --batches B1 B2 --cache-dir /tmp/ess-b1-b2-cache
+python -m src.train --cache-dir /tmp/ess-b1-b2-cache --results-dir /tmp/ess-b1-b2-results
+python -m src.verify --cache-dir /tmp/ess-b1-b2-cache --results-dir /tmp/ess-b1-b2-results
+```
+
+기존 결과 폴더를 다른 배치 구성으로 다시 실행하면 현재 구성의 CSV·그림으로 갱신한다. 실험을 보존하려면 위처럼 결과 폴더를 구분한다. 원본 파일을 추가·교체한 경우 전처리를 다시 실행해야 한다.
+
+## 노트북 실행
+
+가상환경에 커널을 등록하고 Jupyter를 실행한다.
+
+```bash
+python -m ipykernel install --prefix .venv --name ess-battery --display-name 'Python 3.11 (ESS)'
+python -m jupyter lab
+```
+
+`Python 3.11 (ESS)` 커널에서 01 → 02 → 03 순서로 실행한다. 01은 EDA 결과를, 03은 모델·성능·그림을 다시 생성한다. 문서의 성능표는 제출된 [성능 CSV](../results/model_performance.csv) 기준이므로 데이터·코드를 바꾼 실험에서는 해당 수치도 함께 갱신해야 한다.
+
+## 재현 근거 파일
+
+- [실행 메타정보](../results/run_metadata.json): 선택 모델·타깃·alpha, seed, 표본 수, 입력 범위, 라이브러리 버전, 소스 SHA-256
+- [셀별 분할](../results/split_manifest.csv): 학습·홀드아웃·제외·테스트와 외부 CV 폴드
+- [후보 비교](../results/cv_comparison.csv): 입력·타깃·폴드 점수와 채택 판단 근거
+- [셀별 예측](../results/predictions.csv): 총 수명·예측·오차, 오류 분석용 메타정보
