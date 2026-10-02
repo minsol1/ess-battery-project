@@ -2,6 +2,8 @@
 
 [프로젝트 개요](../README.md) · [분석 근거](../docs/analysis.md) · [검증 기록](../docs/validation.md)
 
+EDA 그림 6개는 [질문별 상세 페이지](../docs/eda.md)에 캡션·해석과 함께 정리했다. 원본 PNG는 [docs/assets](../docs/assets), 생성 명령은 `python scripts/export_eda_figures.py`다.
+
 | 파일 | 확인할 내용 | 생성 명령 |
 |---|---|---|
 | [model_performance.csv](model_performance.csv) | 지정 형식의 CV·홀드아웃·B2·선택 B3 성능과 Gap | `python -m src.train` |
